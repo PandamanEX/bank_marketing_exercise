@@ -1,0 +1,408 @@
+---
+title: "Bank marketing exercise"
+output: html_notebook
+---
+
+This is a R notebook of exploring the bank marketing dataset. The dataset used in the notebook can be found in the following link.
+https://archive.ics.uci.edu/ml/datasets/bank+marketing
+
+The data is related with direct marketing campaigns of a Portuguese banking institution. 
+
+
+
+```{r}
+# load libraries
+library(tidyverse)
+library(Amelia)
+library(purrr)
+library(ggplot2)
+library(gridExtra)
+```
+
+```{r}
+# read data
+bank <- read.csv('bank-additional-full.csv', sep=';')
+head(bank)
+```
+
+```{r}
+# first thing first, lets check for missing values
+missmap(bank)
+```
+
+From the missingness map, there is no missing value in the dataframe.
+
+```{r}
+# lets see how many people have subscribed to the term deposit in the dataset.
+
+bank %>% count(y) %>% mutate(percent = n / sum(n))
+
+```
+
+Around 11.3% people have subscribed to the term deposit in the dataset. 
+The value can be used as a benchmark for the exploration process.
+
+```{r}
+summary(bank)
+```
+
+
+We can try to do some vistualization on the categorical attribute for the client data first. Just to have a quick look on the data and check for any attribute beating the benchmark.
+
+# bank client data:
+1 - age (numeric)
+2 - job : type of job (categorical: 'admin.','blue-collar','entrepreneur','housemaid','management','retired','self-employed','services','student','technician','unemployed','unknown')
+3 - marital : marital status (categorical: 'divorced','married','single','unknown'; note: 'divorced' means divorced or widowed)
+4 - education (categorical: 'basic.4y','basic.6y','basic.9y','high.school','illiterate','professional.course','university.degree','unknown')
+5 - default: has credit in default? (categorical: 'no','yes','unknown')
+6 - housing: has housing loan? (categorical: 'no','yes','unknown')
+7 - loan: has personal loan? (categorical: 'no','yes','unknown')
+
+
+```{r fig.width=12, fig.height=4, echo=FALSE}
+# Basic exploration
+# First, group and count the job based on the y value
+y_job_p <- bank %>% group_by(y) %>%
+                    count(job) %>% 
+                    ggplot(aes(x=reorder(job, n), y=n, fill=y)) + 
+                      xlab("Job") +
+                      ylab("Count") +
+                      coord_flip() 
+
+p1 <- y_job_p + 
+        geom_bar(position="fill", stat="identity") +
+        ggtitle("Percentage by job")
+p2 <- y_job_p + 
+        geom_bar(position="dodge", stat="identity")+
+        ggtitle("Count by job")
+
+grid.arrange(p1, p2, ncol=2)
+
+```
+
+By looking at the graph above, there are around 10% of people subscribed a term deposit.
+There is a higher percentage, which is around 25%, for student and retired to subscribe a term deposit. 
+Although the number of subscription is higher in the total sum of admin, 
+the percentage of subscription shows no significance in the percentage of subscription by jobs.
+
+```{r fig.height=4, fig.width=12}
+y_edu_p <- bank %>% group_by(y) %>%
+                    count(education) %>%
+                    ggplot(aes(x=reorder(education, n), y=n, fill=y)) +
+                      coord_flip()
+
+p1 <- y_edu_p + 
+        geom_bar(position='fill', stat="identity") +
+        ggtitle('Percentage by education')
+
+p2 <- y_edu_p +
+        geom_bar(position='dodge', stat="identity") +
+        ggtitle("Count by education")
+
+grid.arrange(p1, p2, ncol=2)
+
+```
+
+From the graph of the education, only the illierate group has a higher percentage then others, 
+but the number of people who is illiterate is very small in the dataset.
+
+```{r fig.height=6, fig.width=12}
+# remaining categorical: marital, default, housing, loan
+
+cat_list <- c('marital', 'default', 'housing', 'loan')
+
+plot_data_column <- function(data, column){
+  ggplot(data=bank, aes_string(x=column, fill="y")) +
+    geom_bar()+
+    ggtitle(column)
+}
+
+p_list <- lapply(cat_list, plot_data_column, data=bank)
+do.call("grid.arrange", c(p_list, ncol=2))
+
+# just to give a numeric result
+marital_y <- bank %>% group_by(y) %>%
+                      count(marital) %>%
+                      ungroup() %>%
+                      group_by(marital) %>%
+                      mutate(percent=n/sum(n))
+
+default_y <- bank %>% group_by(y) %>%
+                      count(default) %>%
+                      ungroup() %>%
+                      group_by(default) %>%
+                      mutate(percent=n/sum(n))
+
+housing_y <- bank %>% group_by(y) %>%
+                      count(housing) %>%
+                      ungroup() %>%
+                      group_by(housing) %>%
+                      mutate(percent=n/sum(n))
+
+loan_y <- bank %>% group_by(y) %>%
+                      count(loan) %>%
+                      ungroup() %>%
+                      group_by(loan) %>%
+                      mutate(percent=n/sum(n))
+
+marital_y
+default_y
+housing_y
+loan_y
+```
+
+From both figures and dataframe, there is no clear difference between the percent based on the attribute and the benchmark.
+
+```{r}
+# age 
+
+age.mean <- bank %>% group_by(y) %>%
+                     summarise(value = mean(age))
+
+bank %>% group_by(y) %>%
+         ggplot(aes(x=age)) +
+           geom_histogram(alpha=0.3, aes(y=..density.., fill=y), color="black", position="identity") +
+           geom_density(aes(y=..density.., color=y)) + 
+           geom_vline(data=age.mean, aes(xintercept=value, color=y), linetype="dashed", size=1)
+```
+
+Although the distribution of the people who have subscribed to the term deposit slight left shifted to the left-hand side, the mean age of both of them are almost the same. There is no clear evidence of age affect the subscription.
+
+
+Quick sum up, there are no clear evidence of the bank client data attributes have any obvious relationship with the subsciption of term deposit. However, the job attribute shows that student and retired people are more likely to subscribe than other occupations.
+
+Lets move on the the second set of attributes, the one related with the last contact of the current campaign. The set of attributes may show a relationship between the previous campaign and the subscription. The idea is that if the client has subscribed in the previous campaign, it is mroe likely to subscribe in this campaign.
+
+# related with the last contact of the current campaign:
+8 - contact: contact communication type (categorical: 'cellular','telephone') 
+9 - month: last contact month of year (categorical: 'jan', 'feb', 'mar', ..., 'nov', 'dec')
+10 - day_of_week: last contact day of the week (categorical: 'mon','tue','wed','thu','fri')
+11 - duration: last contact duration, in seconds (numeric). Important note: this attribute highly affects the output target (e.g., if duration=0 then y='no'). Yet, the duration is not known before a call is performed. Also, after the end of the call y is obviously known. Thus, this input should only be included for benchmark purposes and should be discarded if the intention is to have a realistic predictive model.
+# other attributes:
+12 - campaign: number of contacts performed during this campaign and for this client (numeric, includes last contact)
+13 - pdays: number of days that passed by after the client was last contacted from a previous campaign (numeric; 999 means client was not previously contacted)
+14 - previous: number of contacts performed before this campaign and for this client (numeric)
+15 - poutcome: outcome of the previous marketing campaign (categorical: 'failure','nonexistent','success')
+
+Noted that the duration is a direct result from generated by the output target. For example, if the client wants to subscribe the term deposit, the client service staff may have to explain the term of use, expected return, and other details about the term deposit. Therefore, this attribute should not be considered into the predictive model.
+
+
+```{r}
+# Lets see does the method of contact affect the result or not.
+p_contact <- bank %>% group_by(y) %>%
+                      ggplot(aes(x=contact, fill=y))
+
+p1 <- p_contact + geom_bar(position='fill') + ggtitle('percentage by contact method')
+p2 <- p_contact + geom_bar(position='dodge') + ggtitle('count by contact method')
+
+grid.arrange(p1, p2, ncol=2)
+
+```
+
+The graph above shows an interesting thing, although contacting the client with the cellular does not increase the chance of success, contacting the client with telephone seems lowering the chance of sucess.
+
+The result make me wonder the duration of each phone call, especially for the decliened one. Do those clinets hang up the phone directly, which I usually do, or do they talk a bit then hang up.
+
+```{r}
+contact.mean <-bank %>% filter(y == 'no') %>%
+                group_by(contact) %>%
+                summarise(value = mean(duration))
+
+bank %>% filter(y == 'no') %>%
+         select(contact, duration) %>%
+         ggplot(aes(x=duration)) +            
+           scale_x_continuous(limits = c(0, 1000))+         
+           geom_histogram(alpha=0.3, aes(y=..density.., fill=contact), color="black", position="identity", bins=20) +
+           geom_density(aes(y=..density.., color=contact)) +
+           geom_vline(data=contact.mean, aes(xintercept=value, color=contact), linetype="dashed", size=1)
+           
+print(contact.mean)
+```
+
+The result above is quite out of my expectation. Originally, I though the duration in the telephone would be lower because usually people don't like to receive advertisment calls when they are in their home. This result also suggested that people usually lost their patient within 3.5 mins.
+
+```{r fig.height=4, fig.width=12}
+# month and day of week
+# This two attribute should not make a lot of different
+
+y_bank <- bank %>% group_by(y) %>% select(y, month, day_of_week)
+
+p_month <- y_bank %>% ggplot(aes(x=factor(month, level=c('mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec')), fill=y)) +
+                        xlab("month")
+
+p1 <- p_month + geom_bar(position='fill') + ggtitle("percentage by month")
+p2 <- p_month + geom_bar(position='dodge') + ggtitle("count by month")
+
+p_day <- y_bank %>% ggplot(aes(x=factor(day_of_week, level=c('mon', 'tue', 'wed', 'thu', 'fri')), fill=y)) +
+                      xlab("day of week")
+
+p3 <- p_day + geom_bar(position='fill') + ggtitle("percentage by day of week")
+p4 <- p_day + geom_bar(position='dodge') + ggtitle("count by day of week")
+
+grid.arrange(p1, p2, p3, p4, ncol=2)
+
+```
+
+From the graph above, basically we have almost the same chance of success by choosing the day of week to call the client. The spike from the May could suggest the campaign stated in May.
+
+```{r}
+# what is the mean number of contact required to have a successful subscription?
+
+bank %>% group_by(y) %>%
+         ggplot(aes(x=campaign, fill=y)) +
+           geom_histogram(alpha=0.4, aes(y=..density..), color="black", position="identity", bins=30) +
+           scale_x_continuous(limits = c(0, 20))
+
+```
+
+
+```{r}
+# number of contact in the previous campaign
+bank %>% group_by(y) %>%
+         ggplot(aes(x=previous, fill=y)) +
+           geom_histogram(alpha=0.4, aes(y=..density..), color="black", position="identity", bins=30) +
+           scale_x_continuous(limits = c(0, 10))
+```
+
+
+```{r}
+# see how previous campaign affect the current one.
+bank %>% group_by(poutcome) %>%
+         summarise(percentage = mean(y == 'yes'),
+                   count = n()) %>%
+         mutate(num_success = percentage * count)
+
+```
+
+This result shows an interesting result, it makes sense that if the client has a success subscription in the previous campaign, he is more likely to subscibe the current one. If we consider the current subscription rate as the benchmark, the nonexistent class, who are new clients, has a lower subscription rate than the benchmark. This could be caused by the unfamiliarity of the bank to those client. If they have some background knowledge of the bank, even if they have failed to subscribe to the term deposit, they are more likely to subscibe (slightly better than benchmark).
+
+```{r}
+bank %>% filter(pdays < 999) %>% 
+         ggplot(aes(x=pdays)) +
+           geom_histogram(alpha=0.5, aes(y=..density.., fill=y), position='identity', color="black") +
+           geom_density(aes(y=..density.., color=y))
+
+```
+
+Lastly, we also want to know if the economic enviroment has changed, does it affect the rate of subscription?
+
+# social and economic context attributes
+16 - emp.var.rate: employment variation rate - quarterly indicator (numeric)
+17 - cons.price.idx: consumer price index - monthly indicator (numeric) 
+18 - cons.conf.idx: consumer confidence index - monthly indicator (numeric) 
+19 - euribor3m: euribor 3 month rate - daily indicator (numeric)
+20 - nr.employed: number of employees - quarterly indicator (numeric)
+
+
+```{r}
+# monthly indicator
+
+bank %>% group_by(month) %>% summarise(percentage_yes = mean(y == 'yes'),
+                                       cons.price.idx = last(cons.price.idx),
+                                       cons.conf.idx = last(cons.conf.idx)
+                                       )
+
+
+```
+
+```{r fig.height=10, fig.width=8}
+index_data <- bank %>% group_by(month) %>% 
+                       summarise(cons.price.idx = mean(cons.price.idx),
+                                 cons.conf.idx = mean(cons.conf.idx),
+                                 percent_yes = mean(y == 'yes') / n(),   # divide by the total number in this month
+                                 emp.var.rate = mean(emp.var.rate),
+                                 euribor3m = mean(euribor3m),
+                                 nr.employed = mean(nr.employed) / 1000) %>%
+                        ungroup()
+
+
+columns <- colnames(index_data)
+columns <- columns[columns != 'month']
+get_plots <- function(data, column){
+           ggplot(data=data, aes(group=1, x=factor(month, level=c('mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec')))) +
+           geom_point(aes_string(y=column)) +
+           geom_line(aes_string(y=column)) +
+           xlab("month") 
+}
+plots <- lapply(columns, get_plots, data=index_data)
+do.call("grid.arrange", c(plots, ncol=1))
+
+
+```
+
+It is not that easy to tell the relation from the graph, let convert the dataframe to a correlation matrix.
+
+```{r}
+index_data %>% select(-month) %>%
+               cor()
+
+```
+
+From the correlation matrix above, the percentage of subscription is strongly negatively correlated to con.price.idx, emp.var.rate, and euibor3m. It is also positively correlated to the con.conf.idx, but it has nearly no correlation to the nr.employed.
+
+
+
+```{r}
+bank[bank == 'unknown'] <- NA
+
+numeric_bank <- bank %>%  na.omit() %>%
+                          mutate_at(.vars = vars(marital, education, default, housing, loan, contact), .funs=unclass) %>%
+                          mutate(month = recode(month, 
+                                               'mar' = 3,
+                                               'apr' = 4,
+                                               'may' = 5,
+                                               'jun' = 6,
+                                               'jul' = 7,
+                                               'aug' = 8,
+                                               'sep' = 9,
+                                               'oct' = 10,
+                                               'nov' = 11,
+                                               'dec' = 12),
+                                day_of_week = recode(day_of_week,
+                                                     'mon' = 1,
+                                                     'tue' = 2,
+                                                     'wed' = 3,
+                                                     'thu' = 4,
+                                                     'fri' = 5),
+                                poutcome = unclass(poutcome),
+                                y = as.factor(unclass(y) -1)) %>% 
+                          select(-duration, -pdays) %>%
+                          mutate_at(.vars = vars(age, cons.price.idx, cons.conf.idx, emp.var.rate, euribor3m, nr.employed),
+                                    .funs = scale)                          
+
+
+
+
+```
+
+```{r}
+model <- glm(y ~ ., family = binomial(link='logit'), data=numeric_bank)
+summary(model)
+```
+
+```{r}
+library(ResourceSelection)
+hoslem.test(model$y, model$fitted)
+```
+Although we have a linear model that gives the importance of features, the hosmer and lemshow test suggested that the model is a poorly fitted one sice the p-value is less than 0.05
+
+
+```{r}
+library(randomForest)
+rf = randomForest(y ~ ., tree=20, data=numeric_bank, importance=T)
+importance(rf)
+
+```
+
+```{r}
+# cross validation
+cv_result <- rfcv(numeric_bank, numeric_bank$y, cv.fold=5)
+
+```
+
+```{r}
+plot(cv_result$n.var, cv_result$error.cv, log="x", type="o", lwd=2)
+```
+
+
+
